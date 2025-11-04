@@ -1,0 +1,86 @@
+---
+- name: Deploy Snake Game Application
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    docker_image: "snake-game:latest"
+    ansible_python_interpreter: /usr/bin/python3
+  
+  tasks:
+    - name: Ensure Python 3.11 is installed (raw)
+      raw: |
+        sudo yum -y install python3.11 || sudo yum -y install python3
+      changed_when: false
+
+    - name: Detect available python3 interpreter path
+      raw: |
+        if command -v python3.11 >/dev/null 2>&1; then command -v python3.11;
+        elif command -v python3 >/dev/null 2>&1; then command -v python3;
+        elif command -v python >/dev/null 2>&1; then command -v python;
+        else echo ""; fi
+      register: pyinterp
+      changed_when: false
+
+    - name: Update ansible_python_interpreter fact
+      set_fact:
+        ansible_python_interpreter: "{{ pyinterp.stdout }}"
+
+    - name: Reset ssh connection to use new interpreter
+      meta: reset_connection
+    - name: Ensure Docker is installed and running
+      raw: |
+        sudo yum install -y docker >/dev/null 2>&1 || true
+        sudo systemctl enable docker >/dev/null 2>&1 || true
+        sudo systemctl start docker >/dev/null 2>&1 || true
+      changed_when: false
+
+    - name: Stop and remove existing container
+      raw: |
+        docker rm -f snake-game >/dev/null 2>&1 || true
+      changed_when: false
+
+    - name: Create build directory
+      file:
+        path: /tmp/snake-app
+        state: directory
+        mode: '0755'
+
+    - name: Copy app files to remote (index.html)
+      copy:
+        src: ../index.html
+        dest: /tmp/snake-app/index.html
+
+    - name: Copy app files to remote (styles.css)
+      copy:
+        src: ../styles.css
+        dest: /tmp/snake-app/styles.css
+
+    - name: Copy app files to remote (game.js)
+      copy:
+        src: ../game.js
+        dest: /tmp/snake-app/game.js
+
+    - name: Copy Dockerfile to remote
+      copy:
+        src: ../Dockerfile
+        dest: /tmp/snake-app/Dockerfile
+
+    - name: Build Docker image on EC2
+      raw: |
+        docker build -t {{ docker_image }} /tmp/snake-app
+
+    - name: Run Snake Game container
+      raw: |
+        docker run -d --restart always --name snake-game -p 80:80 {{ docker_image }}
+      changed_when: false
+
+    - name: Verify container is running
+      raw: docker ps | grep snake-game
+      register: container_status
+      changed_when: false
+
+    - name: Display container status
+      debug:
+        msg: "Container status: {{ container_status.stdout }}"
+
